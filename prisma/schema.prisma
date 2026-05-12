@@ -1,0 +1,131 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id         String     @id @default(cuid())
+  email      String     @unique
+  password   String
+  name       String
+  title      String
+  smtpHost   String?
+  smtpPort   Int?
+  smtpUser   String?
+  smtpPass   String?
+  signature  String     @default("Best regards,\n\n{name}\n{title}, PivotHire\n{email}")
+  contacts   Contact[]
+  campaigns  Campaign[]
+  templates  Template[]
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+}
+
+enum Segment {
+  STARTUP
+  TRADITIONAL
+}
+
+model Contact {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  name        String
+  company     String
+  title       String?
+  industry    String?
+  segment     Segment  @default(STARTUP)
+  source      String   @default("manual")
+  companyInfo Json?
+  tags        String[]
+  owner       User     @relation(fields: [ownerId], references: [id])
+  ownerId     String
+  emails      Email[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+enum CampaignStatus {
+  DRAFT
+  GENERATING
+  REVIEW
+  SENDING
+  COMPLETED
+}
+
+model Campaign {
+  id             String         @id @default(cuid())
+  name           String
+  status         CampaignStatus @default(DRAFT)
+  segment        String?
+  industry       String?
+  templatePrompt String?
+  createdBy      User           @relation(fields: [createdById], references: [id])
+  createdById    String
+  emails         Email[]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+}
+
+enum EmailStatus {
+  PENDING
+  GENERATED
+  APPROVED
+  SENT
+  FAILED
+}
+
+model Email {
+  id             String          @id @default(cuid())
+  subject        String          @default("")
+  body           String          @default("")
+  status         EmailStatus     @default(PENDING)
+  sentAt         DateTime?
+  contact        Contact         @relation(fields: [contactId], references: [id])
+  contactId      String
+  campaign       Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaignId     String
+  trackingEvents TrackingEvent[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@unique([contactId, campaignId])
+}
+
+enum TrackingType {
+  OPEN
+  CLICK
+}
+
+model TrackingEvent {
+  id        String       @id @default(cuid())
+  type      TrackingType
+  url       String?
+  ip        String?
+  userAgent String?
+  email     Email        @relation(fields: [emailId], references: [id], onDelete: Cascade)
+  emailId   String
+  timestamp DateTime     @default(now())
+}
+
+enum TemplateType {
+  BASE
+  SEGMENT
+  INDUSTRY
+}
+
+model Template {
+  id          String       @id @default(cuid())
+  name        String
+  type        TemplateType
+  segment     String?
+  industry    String?
+  content     String
+  createdBy   User         @relation(fields: [createdById], references: [id])
+  createdById String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
