@@ -75,18 +75,23 @@ export default function CampaignReviewPage() {
     }
   }
 
+  const [sendResult, setSendResult] = useState<string | null>(null);
+
   async function handleSendApproved() {
-    if (!campaign) return;
+    if (!campaign || !confirm("Send all approved emails now?")) return;
     setSending(true);
+    setSendResult(null);
     try {
-      const res = await fetch(`/api/campaigns/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "SENDING" }),
+      const res = await fetch(`/api/campaigns/${id}/send`, {
+        method: "POST",
       });
+      const data = await res.json();
       if (res.ok) {
-        await fetchCampaign();
+        setSendResult(`Sent ${data.sent} email${data.sent !== 1 ? "s" : ""}${data.failed ? `, ${data.failed} failed` : ""}`);
+      } else {
+        setSendResult(`Error: ${data.error}`);
       }
+      await fetchCampaign();
     } finally {
       setSending(false);
     }
@@ -112,7 +117,7 @@ export default function CampaignReviewPage() {
   const approvedEmails = campaign.emails.filter((e) => e.status === "APPROVED");
   const hasPending = pendingEmails.length > 0;
   const hasApproved = approvedEmails.length > 0;
-  const canSend = hasApproved && campaign.status === "REVIEW";
+  const canSend = hasApproved && (campaign.status === "REVIEW" || campaign.status === "SENDING");
 
   const { label, className } = statusConfig[campaign.status];
 
@@ -162,6 +167,12 @@ export default function CampaignReviewPage() {
           )}
         </div>
       </div>
+
+      {sendResult && (
+        <div className={`mb-4 px-4 py-3 rounded-lg text-sm ${sendResult.startsWith("Error") ? "bg-red-50 text-red-700" : "bg-green-50 text-green-700"}`}>
+          {sendResult}
+        </div>
+      )}
 
       {/* Email review table */}
       <EmailReviewTable emails={campaign.emails} onRefresh={fetchCampaign} />
