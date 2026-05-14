@@ -42,7 +42,6 @@ export async function GET(request: NextRequest) {
         status: "APPROVED",
       },
       include: { contact: true },
-      take: 5,
     });
 
     for (const email of approvedEmails) {
