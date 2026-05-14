@@ -57,7 +57,6 @@ export function LlmImportModal({ onClose, onImported }: LlmImportModalProps) {
   const missingEmailCount = contacts.filter((c) => !hasEmail(c)).length;
 
   function toggleContact(index: number) {
-    if (!hasEmail(contacts[index])) return;
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(index)) {
@@ -80,16 +79,19 @@ export function LlmImportModal({ onClose, onImported }: LlmImportModalProps) {
   async function handleEnrich() {
     setEnriching(true);
     try {
+      const noEmailContacts = contacts.filter((c) => !hasEmail(c));
       const res = await fetch("/api/contacts/enrich", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contacts }),
+        body: JSON.stringify({ contacts: noEmailContacts }),
       });
       if (res.ok) {
         const data = await res.json();
-        const updated: ParsedContact[] = data.contacts ?? contacts;
+        const enriched: ParsedContact[] = data.contacts ?? [];
+        const found = enriched.filter((c) => hasEmail(c));
+        const updated = [...contacts.filter((c) => hasEmail(c)), ...found];
         setContacts(updated);
-        setSelected(new Set(updated.map((_, i) => i).filter((i) => hasEmail(updated[i]))));
+        setSelected(new Set(updated.map((_, i) => i)));
       }
     } catch {
       // silently fail
@@ -183,10 +185,10 @@ export function LlmImportModal({ onClose, onImported }: LlmImportModalProps) {
               <>
                 <div className="flex items-center justify-between">
                   <p className="text-sm text-gray-500">
-                    {contacts.length} contact{contacts.length !== 1 ? "s" : ""} found.
+                    {importable.length} contact{importable.length !== 1 ? "s" : ""} ready to import.
                     {missingEmailCount > 0 && (
                       <span className="text-amber-600">
-                        {" "}{missingEmailCount} missing email.
+                        {" "}{missingEmailCount} skipped (no email).
                       </span>
                     )}
                   </p>
@@ -196,7 +198,7 @@ export function LlmImportModal({ onClose, onImported }: LlmImportModalProps) {
                       disabled={enriching}
                       className="px-3 py-1.5 text-xs font-medium text-white bg-purple-600 rounded-md hover:bg-purple-700 disabled:opacity-50"
                     >
-                      {enriching ? "Searching..." : `Search ${missingEmailCount} Missing Emails`}
+                      {enriching ? "Searching the web..." : `Search ${missingEmailCount} Missing Emails`}
                     </button>
                   )}
                 </div>
@@ -219,26 +221,21 @@ export function LlmImportModal({ onClose, onImported }: LlmImportModalProps) {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {contacts.map((contact, i) => {
-                        const noEmail = !hasEmail(contact);
-                        return (
+                      {contacts.filter(hasEmail).map((contact, i) => (
                         <tr
                           key={i}
-                          className={noEmail ? "bg-red-50/50 opacity-60" : selected.has(i) ? "bg-white" : "bg-gray-50 opacity-50"}
+                          className={selected.has(contacts.indexOf(contact)) ? "bg-white" : "bg-gray-50 opacity-50"}
                         >
                           <td className="px-3 py-2">
                             <input
                               type="checkbox"
-                              checked={selected.has(i)}
-                              onChange={() => toggleContact(i)}
-                              disabled={noEmail}
-                              className="rounded disabled:opacity-30"
+                              checked={selected.has(contacts.indexOf(contact))}
+                              onChange={() => toggleContact(contacts.indexOf(contact))}
+                              className="rounded"
                             />
                           </td>
                           <td className="px-3 py-2 font-medium text-gray-900">{contact.name}</td>
-                          <td className="px-3 py-2 text-gray-600">
-                            {contact.email || <span className="text-red-400 italic text-xs">no email</span>}
-                          </td>
+                          <td className="px-3 py-2 text-gray-600">{contact.email}</td>
                           <td className="px-3 py-2 text-gray-600">{contact.company}</td>
                           <td className="px-3 py-2">
                             <span
@@ -252,8 +249,7 @@ export function LlmImportModal({ onClose, onImported }: LlmImportModalProps) {
                             </span>
                           </td>
                         </tr>
-                        );
-                      })}
+                      ))}
                     </tbody>
                   </table>
                 </div>
