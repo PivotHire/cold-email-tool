@@ -25,6 +25,7 @@ export function LlmImportModal({ onClose, onImported }: LlmImportModalProps) {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [saving, setSaving] = useState(false);
   const [saveErrors, setSaveErrors] = useState<string[]>([]);
+  const [enriching, setEnriching] = useState(false);
 
   async function handleParse() {
     setParsing(true);
@@ -42,7 +43,7 @@ export function LlmImportModal({ onClose, onImported }: LlmImportModalProps) {
       }
       const parsed: ParsedContact[] = data.contacts ?? [];
       setContacts(parsed);
-      setSelected(new Set(parsed.map((_, i) => i)));
+      setSelected(new Set(parsed.filter((c) => c.email?.trim()).map((_, i) => i)));
       setStep("review");
     } catch {
       setParseError("An unexpected error occurred. Please try again.");
@@ -51,7 +52,12 @@ export function LlmImportModal({ onClose, onImported }: LlmImportModalProps) {
     }
   }
 
+  const hasEmail = (c: ParsedContact) => !!c.email?.trim();
+  const importable = contacts.filter(hasEmail);
+  const missingEmailCount = contacts.filter((c) => !hasEmail(c)).length;
+
   function toggleContact(index: number) {
+    if (!hasEmail(contacts[index])) return;
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(index)) {
@@ -64,11 +70,31 @@ export function LlmImportModal({ onClose, onImported }: LlmImportModalProps) {
   }
 
   function toggleAll() {
-    if (selected.size === contacts.length) {
+    if (selected.size === importable.length) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(contacts.map((_, i) => i)));
+      setSelected(new Set(contacts.map((_, i) => i).filter((i) => hasEmail(contacts[i]))));
     }
+  }
+
+  async function handleEnrich() {
+    setEnriching(true);
+    try {
+      const res = await fetch("/api/contacts/enrich", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contacts }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const updated: ParsedContact[] = data.contacts ?? contacts;
+        setContacts(updated);
+        setSelected(new Set(updated.map((_, i) => i).filter((i) => hasEmail(updated[i]))));
+      }
+    } catch {
+      // silently fail
+    }
+    setEnriching(false);
   }
 
   async function handleImport() {
@@ -155,10 +181,25 @@ export function LlmImportModal({ onClose, onImported }: LlmImportModalProps) {
               <p className="text-sm text-gray-500">No contacts were found in the provided text.</p>
             ) : (
               <>
-                <p className="text-sm text-gray-500">
-                  {contacts.length} contact{contacts.length !== 1 ? "s" : ""} found. Select the
-                  ones you want to import.
-                </p>
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-gray-500">
+                    {contacts.length} contact{contacts.length !== 1 ? "s" : ""} found.
+                    {missingEmailCount > 0 && (
+                      <span className="text-amber-600">
+                        {" "}{missingEmailCount} missing email.
+                      </span>
+                    )}
+                  </p>
+                  {missingEmailCount > 0 && (
+                    <button
+                      onClick={handleEnrich}
+                      disabled={enriching}
+                      className="px-3 py-1.5 text-xs font-medium text-white bg-purple-600 rounded-md hover:bg-purple-700 disabled:opacity-50"
+                    >
+                      {enriching ? "Searching..." : `Search ${missingEmailCount} Missing Emails`}
+                    </button>
+                  )}
+                </div>
                 <div className="overflow-x-auto border border-gray-200 rounded-md">
                   <table className="w-full text-sm text-left">
                     <thead className="bg-gray-50 text-gray-600 uppercase text-xs">
@@ -166,7 +207,7 @@ export function LlmImportModal({ onClose, onImported }: LlmImportModalProps) {
                         <th className="px-3 py-2 w-8">
                           <input
                             type="checkbox"
-                            checked={selected.size === contacts.length}
+                            checked={selected.size === importable.length && importable.length > 0}
                             onChange={toggleAll}
                             className="rounded"
                           />
@@ -178,21 +219,26 @@ export function LlmImportModal({ onClose, onImported }: LlmImportModalProps) {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {contacts.map((contact, i) => (
+                      {contacts.map((contact, i) => {
+                        const noEmail = !hasEmail(contact);
+                        return (
                         <tr
                           key={i}
-                          className={selected.has(i) ? "bg-white" : "bg-gray-50 opacity-50"}
+                          className={noEmail ? "bg-red-50/50 opacity-60" : selected.has(i) ? "bg-white" : "bg-gray-50 opacity-50"}
                         >
                           <td className="px-3 py-2">
                             <input
                               type="checkbox"
                               checked={selected.has(i)}
                               onChange={() => toggleContact(i)}
-                              className="rounded"
+                              disabled={noEmail}
+                              className="rounded disabled:opacity-30"
                             />
                           </td>
                           <td className="px-3 py-2 font-medium text-gray-900">{contact.name}</td>
-                          <td className="px-3 py-2 text-gray-600">{contact.email}</td>
+                          <td className="px-3 py-2 text-gray-600">
+                            {contact.email || <span className="text-red-400 italic text-xs">no email</span>}
+                          </td>
                           <td className="px-3 py-2 text-gray-600">{contact.company}</td>
                           <td className="px-3 py-2">
                             <span
@@ -206,7 +252,8 @@ export function LlmImportModal({ onClose, onImported }: LlmImportModalProps) {
                             </span>
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
