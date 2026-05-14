@@ -3,6 +3,13 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import OpenAI from "openai";
 
+type ContactInput = {
+  name: string;
+  company: string;
+  email?: string;
+  title?: string;
+};
+
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -12,60 +19,45 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "No contacts provided" }, { status: 400 });
   }
 
-  const missing = contacts.filter(
-    (c: { email?: string }) => !c.email?.trim()
-  );
-
+  const missing = contacts.filter((c: ContactInput) => !c.email?.trim());
   if (missing.length === 0) {
     return NextResponse.json({ contacts });
   }
 
   const openai = new OpenAI();
-  const response = await openai.chat.completions.create({
-    model: "gpt-5.4-mini",
-    response_format: { type: "json_object" },
-    messages: [
-      {
-        role: "system",
-        content: `You are an email research assistant. For each company/person below, find or construct the most likely professional email address.
-
-Strategy:
-1. If the company name is clearly a domain (e.g. "CreatoRain" → createorain.com), construct firstname@domain or info@domain
-2. Use common patterns: firstname@company.com, first.last@company.com, hello@company.com
-3. For well-known companies, use their actual domain
-4. Clean the company name to form the domain: remove spaces, lowercase, add .com
-
-Return JSON: { "results": [{ "name": "...", "company": "...", "email": "best-guess-email" }] }
-Always provide your best guess. Never leave email empty.`,
-      },
-      {
-        role: "user",
-        content: JSON.stringify(
-          missing.map((c: { name: string; company: string; title?: string }) => ({
-            name: c.name,
-            company: c.company,
-            title: c.title,
-          }))
-        ),
-      },
-    ],
-  });
-
-  const content = response.choices[0]?.message?.content;
-  if (!content) {
-    return NextResponse.json({ contacts });
-  }
-
-  const parsed = JSON.parse(content);
-  const enriched = parsed.results || [];
-
   const enrichMap = new Map<string, string>();
-  for (const r of enriched) {
-    const key = `${r.name}::${r.company}`.toLowerCase();
-    if (r.email) enrichMap.set(key, r.email);
-  }
 
-  const updated = contacts.map((c: { name: string; company: string; email?: string }) => {
+  // Search for each contact's email using web search (max 10 at a time)
+  const batch = missing.slice(0, 10);
+  await Promise.all(
+    batch.map(async (c: ContactInput) => {
+      try {
+        const response = await openai.responses.create({
+          model: "gpt-5.4-mini",
+          tools: [{ type: "web_search_preview" }],
+          instructions:
+            "You are an email research assistant. Search the web to find the real professional email address for this person or their company. Look for their company website, LinkedIn, Crunchbase, or any public source. Return ONLY the email address you found — nothing else. If you truly cannot find any email, return NOT_FOUND.",
+          input: `Find the professional email address for ${c.name}${c.title ? `, ${c.title}` : ""} at ${c.company}`,
+        });
+
+        const text =
+          typeof response.output_text === "string"
+            ? response.output_text.trim()
+            : "";
+        const emailMatch = text.match(
+          /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/
+        );
+        if (emailMatch) {
+          const key = `${c.name}::${c.company}`.toLowerCase();
+          enrichMap.set(key, emailMatch[0].toLowerCase());
+        }
+      } catch (err) {
+        console.error(`Failed to enrich ${c.name} at ${c.company}:`, err);
+      }
+    })
+  );
+
+  const updated = contacts.map((c: ContactInput) => {
     if (c.email?.trim()) return c;
     const key = `${c.name}::${c.company}`.toLowerCase();
     const found = enrichMap.get(key);
